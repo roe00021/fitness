@@ -114,6 +114,7 @@ svg{display:block;width:100%;height:44px;margin:6px 0}
 <label for="c3">File path</label><input id="c3" placeholder="gym-log.json" autocapitalize="off">
 <label for="c4">Access token</label><input id="c4" type="password" placeholder="github_pat_…" autocomplete="off">
 <button class="go" id="cfgsave">Save &amp; sync</button>
+<p class="m" id="cfgmsg" style="font-weight:600"></p>
 <button class="more" id="lnk">Copy private setup link</button>
 <p class="m">If you ever clear your browser data, open this link (or re-enter the token) on that device and your whole log comes back from GitHub. The link contains your token, so keep it somewhere private like a password manager.</p></div>
 </section>
@@ -166,7 +167,7 @@ function synced(){return!!(CFG.repo&&CFG.token&&CFG.path)}
 function banner(){$('cloud').className=synced()?'hide':'card cloudb'}
 function gh(m,b){var u='https://api.github.com/repos/'+CFG.repo+'/contents/'+CFG.path;if(m==='GET')u+='?ref='+encodeURIComponent(CFG.branch||'main');
 return fetch(u,{method:m,cache:'no-store',headers:{Authorization:'Bearer '+CFG.token,Accept:'application/vnd.github+json'},body:b?JSON.stringify(b):undefined})}
-function why(r,a){return r.status===401||r.status===403?'token rejected':r.status===404?'repo or branch not found':a+' '+r.status}
+function why(r,a){return r.status===401?'token rejected':r.status===403?(a==='write'?'token can\u2019t write \u2014 it needs Contents: Read and write':'token rejected'):r.status===404?'repo or branch not found':a+' '+r.status}
 function persist(){try{localStorage.setItem(K,JSON.stringify(S));localStorage.setItem(KM,JSON.stringify(META));return true}catch(e){return false}}
 function save(now){META.savedAt=new Date().toISOString();META.dirty=true;var ok=persist();
 if(!synced()){stamp((ok?'Not in the cloud yet':'NOT saved')+' \u00b7 connect GitHub in Settings',false);return}
@@ -182,13 +183,13 @@ var b={message:'Update gym log '+t,content:b64e(JSON.stringify({savedAt:t,sets:S
 var w=await gh('PUT',b);if(!w.ok)throw new Error(why(w,'write'));SHA=(await w.json()).content.sha;
 if(META.savedAt===t){META.dirty=false;META.base=t;persist();stamp('Saved to GitHub \u00b7 '+fmt(t),true)}}
 catch(e){stamp('NOT in the cloud yet ('+e.message+') \u00b7 will retry',false)}BUSY=false}
-async function pull(){if(!synced())return;if(META.dirty&&!FIRST){push();return}
-try{var r=await gh('GET');if(r.status===404){META.dirty=true;META.savedAt=META.savedAt||new Date().toISOString();FIRST=false;push();return}if(!r.ok)throw new Error(why(r,'read'));
+async function pull(){if(!synced())return;if(META.dirty&&!FIRST){await push();return}
+try{var r=await gh('GET');if(r.status===404){META.dirty=true;META.savedAt=META.savedAt||new Date().toISOString();FIRST=false;await push();return}if(!r.ok)throw new Error(why(r,'read'));
 var j=await r.json(),d=JSON.parse(b64d(j.content));SHA=j.sha;
-if(FIRST&&META.dirty){FIRST=false;if(confirm('GitHub already has a log ('+d.sets.length+' sets).\nOK = use the GitHub copy only.\nCancel = merge this device\u2019s '+S.length+' sets into it.')){META.dirty=false;META.savedAt=''}else{push();return}}
+if(FIRST&&META.dirty){FIRST=false;if(confirm('GitHub already has a log ('+d.sets.length+' sets).\nOK = use the GitHub copy only.\nCancel = merge this device\u2019s '+S.length+' sets into it.')){META.dirty=false;META.savedAt=''}else{await push();return}}
 FIRST=false;
 if(d.savedAt>META.savedAt){S=d.sets;META.savedAt=d.savedAt;render();pre()}
-else if(d.savedAt<META.savedAt){META.dirty=true;push();return}
+else if(d.savedAt<META.savedAt){META.dirty=true;await push();return}
 META.base=d.savedAt;persist();stamp('Saved to GitHub \u00b7 '+fmt(META.savedAt),true)}catch(e){stamp('Can\u2019t reach GitHub ('+e.message+') \u00b7 showing your last synced copy',false)}}
 function e1(s){return s.w*(1+s.r/30)}
 function fd(d){if(!d)return"no date";var p=d.split("-"),m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];return m[+p[1]-1]+" "+(+p[2])}
@@ -291,10 +292,21 @@ $("exp").onclick=function(){var a=document.createElement('a');a.href=URL.createO
 $("imp").onchange=function(e){var f=e.target.files[0];if(!f)return;f.text().then(function(t){var d=JSON.parse(t);if(!Array.isArray(d.sets))throw 0;
 if(confirm('Replace the current log with this file ('+d.sets.length+' sets)?')){S=d.sets;save(true);render();pre()}}).catch(function(){stamp('That file is not a valid gym log',false)});e.target.value=''};
 ['c1','c2','c3','c4'].forEach(function(id,i){$(id).value=[CFG.repo,CFG.branch,CFG.path,CFG.token][i]||''});
-$("cfgsave").onclick=function(){CFG={repo:$("c1").value.trim(),branch:$("c2").value.trim()||'main',path:$("c3").value.trim()||'gym-log.json',token:$("c4").value.trim()};
+$("cfgsave").onclick=async function(){var m=$("cfgmsg"),say=function(t,ok){m.textContent=t;m.style.color=ok?'var(--ok)':'#d9482b'};
+var repo=$("c1").value.trim().replace(/^https?:\/\/github\.com\//,'').replace(/\.git$/,'').replace(/\/$/,''),tk=$("c4").value.trim();
+if(!/^[\w.-]+\/[\w.-]+$/.test(repo)){say('Repo must look like owner/name, for example roe00021/fitness',false);return}
+if(!tk){say('Paste your access token first',false);return}
+CFG={repo:repo,branch:$("c2").value.trim()||'main',path:$("c3").value.trim()||'gym-log.json',token:tk};$("c1").value=repo;
 try{localStorage.setItem(KC,JSON.stringify(CFG))}catch(e){}
-FIRST=true;banner();if(synced()){stamp('Connecting to GitHub\u2026',true);pull()}else stamp('Cloud saving is off \u00b7 fill in all four fields',false)};
-//comment
+FIRST=true;banner();say('1/3 Checking the repo\u2026',true);
+try{var r=await fetch('https://api.github.com/repos/'+CFG.repo,{cache:'no-store',headers:{Authorization:'Bearer '+tk,Accept:'application/vnd.github+json'}});
+if(r.status===401){say('Token rejected (expired or mistyped). Make a new token and paste it again.',false);return}
+if(r.status===404){say('Repo not found. Check the owner/name, and that the token has access to that repo.',false);return}
+if(!r.ok){say('GitHub answered '+r.status+'.',false);return}}
+catch(e){say('Could not reach GitHub from this browser ('+e.message+'). Check your connection or turn off content blockers.',false);return}
+say('2/3 Loading your log\u2026',true);await pull();
+say('3/3 Testing that saving works\u2026',true);META.savedAt=new Date().toISOString();META.dirty=true;persist();await push();
+say($('stat').textContent,$('stat').className.indexOf('ok')>-1)};
 banner();$("gocfg").onclick=function(){show("set")};
 try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
 $("lnk").onclick=function(){if(!synced()){stamp('Fill in and save the GitHub fields first',false);return}
